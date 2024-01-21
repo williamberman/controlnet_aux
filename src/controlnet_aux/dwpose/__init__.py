@@ -41,51 +41,69 @@ class DWposeDetector:
         return self
     
     def __call__(self, input_image, detect_resolution=512, image_resolution=512, output_type="pil", **kwargs):
-        
-        input_image = cv2.cvtColor(np.array(input_image, dtype=np.uint8), cv2.COLOR_RGB2BGR)
+        if isinstance(input_image, list):
+            input_images = []
+            for input_image_ in input_image:
+                input_image_ = cv2.cvtColor(np.array(input_image_, dtype=np.uint8), cv2.COLOR_RGB2BGR)
 
-        input_image = HWC3(input_image)
-        input_image = resize_image(input_image, detect_resolution)
-        H, W, C = input_image.shape
+                input_image_ = HWC3(input_image_)
+                if detect_resolution is not None:
+                    input_image_ = resize_image(input_image_, detect_resolution)
+                H, W, C = input_image_.shape
+                input_images.append(input_image_)
+            input_image = input_images
+        else:
+            input_image = cv2.cvtColor(np.array(input_image, dtype=np.uint8), cv2.COLOR_RGB2BGR)
+
+            input_image = HWC3(input_image)
+            if detect_resolution is not None:
+                input_image = resize_image(input_image, detect_resolution)
+            H, W, C = input_image.shape
         
         with torch.no_grad():
-            candidate, subset = self.pose_estimation(input_image)
-            nums, keys, locs = candidate.shape
-            candidate[..., 0] /= float(W)
-            candidate[..., 1] /= float(H)
-            body = candidate[:,:18].copy()
-            body = body.reshape(nums*18, locs)
-            score = subset[:,:18]
+            all_candidates, all_subsets = self.pose_estimation(input_image)
+
+            rv = []
+
+            for candidate, subset in zip(all_candidates, all_subsets):
+                if candidate is None:
+                    assert subset is None
+                    rv.append(np.zeros((H, W, 3)))
+                    continue
+
+                nums, keys, locs = candidate.shape
+                candidate[..., 0] /= float(W)
+                candidate[..., 1] /= float(H)
+                body = candidate[:,:18].copy()
+                body = body.reshape(nums*18, locs)
+                score = subset[:,:18]
             
-            for i in range(len(score)):
-                for j in range(len(score[i])):
-                    if score[i][j] > 0.3:
-                        score[i][j] = int(18*i+j)
-                    else:
-                        score[i][j] = -1
+                for i in range(len(score)):
+                    for j in range(len(score[i])):
+                        if score[i][j] > 0.3:
+                            score[i][j] = int(18*i+j)
+                        else:
+                            score[i][j] = -1
 
-            un_visible = subset<0.3
-            candidate[un_visible] = -1
+                un_visible = subset<0.3
+                candidate[un_visible] = -1
 
-            foot = candidate[:,18:24]
+                foot = candidate[:,18:24]
 
-            faces = candidate[:,24:92]
+                faces = candidate[:,24:92]
 
-            hands = candidate[:,92:113]
-            hands = np.vstack([hands, candidate[:,113:]])
+                hands = candidate[:,92:113]
+                hands = np.vstack([hands, candidate[:,113:]])
             
-            bodies = dict(candidate=body, subset=score)
-            pose = dict(bodies=bodies, hands=hands, faces=faces)
+                bodies = dict(candidate=body, subset=score)
+                pose = dict(bodies=bodies, hands=hands, faces=faces)
             
-            detected_map = draw_pose(pose, H, W)
-            detected_map = HWC3(detected_map)
+                detected_map = draw_pose(pose, H, W)
+                detected_map = HWC3(detected_map)
+
+                rv.append(detected_map)
             
-            img = resize_image(input_image, image_resolution)
-            H, W, C = img.shape
-
-            detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_LINEAR)
-
             if output_type == "pil":
-                detected_map = Image.fromarray(detected_map)
-                
-            return detected_map
+                detected_map = [Image.fromarray(x) for x in detected_map]
+
+            return rv

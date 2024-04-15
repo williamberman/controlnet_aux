@@ -40,7 +40,7 @@ class DWposeDetector:
         self.pose_estimation.to(device)
         return self
     
-    def __call__(self, input_image, detect_resolution=512, image_resolution=512, output_type="pil", **kwargs):
+    def __call__(self, input_image, detect_resolution=512, image_resolution=512, output_type="pil", return_keypoints=False, filter_more_than_1=False, **kwargs):
         if isinstance(input_image, list):
             input_images = []
             for input_image_ in input_image:
@@ -65,6 +65,9 @@ class DWposeDetector:
 
             rv = []
 
+            if return_keypoints:
+                rvkp = []
+
             for candidate, subset in zip(all_candidates, all_subsets):
                 if candidate is None:
                     assert subset is None
@@ -72,6 +75,13 @@ class DWposeDetector:
                     continue
 
                 nums, keys, locs = candidate.shape
+
+                if filter_more_than_1 and nums > 1:
+                    rv.append(None)
+                    if return_keypoints:
+                        rvkp.append(None)
+                    continue
+
                 candidate[..., 0] /= float(W)
                 candidate[..., 1] /= float(H)
                 body = candidate[:,:18].copy()
@@ -97,13 +107,20 @@ class DWposeDetector:
             
                 bodies = dict(candidate=body, subset=score)
                 pose = dict(bodies=bodies, hands=hands, faces=faces)
-            
+
+                if return_keypoints:
+                    rvkp.append(pose)
+
                 detected_map = draw_pose(pose, H, W)
                 detected_map = HWC3(detected_map)
+            
+                if output_type == "pil":
+                    detected_map = Image.fromarray(detected_map)
+                    # detected_map = [Image.fromarray(x) for x in detected_map]
 
                 rv.append(detected_map)
-            
-            if output_type == "pil":
-                detected_map = [Image.fromarray(x) for x in detected_map]
+
+            if return_keypoints:
+                return rv, rvkp                
 
             return rv
